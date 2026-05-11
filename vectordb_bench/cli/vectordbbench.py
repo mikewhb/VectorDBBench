@@ -37,6 +37,7 @@ from ..backend.clients.redis.cli import Redis
 from ..backend.clients.s3_vectors.cli import S3Vectors
 from ..backend.clients.seekdb.cli import SeekDBHNSW
 from ..backend.clients.tencent_elasticsearch.cli import TencentElasticsearch
+from ..backend.clients.tdsql_multimodal.cli import TDSQLMultimodalIVFFlat
 from ..backend.clients.test.cli import Test
 from ..backend.clients.tidb.cli import TiDB
 from ..backend.clients.turbopuffer.cli import TurboPuffer
@@ -97,6 +98,7 @@ cli.add_command(PolarDBHNSWFlat)
 cli.add_command(PolarDBHNSWPQ)
 cli.add_command(PolarDBHNSWSQ)
 cli.add_command(SeekDBHNSW)
+cli.add_command(TDSQLMultimodalIVFFlat)
 
 
 if __name__ == "__main__":

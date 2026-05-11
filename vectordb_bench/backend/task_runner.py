@@ -108,7 +108,7 @@ class CaseRunner(BaseModel):
         # Compose a compact, case-unique collection/table name for Doris to avoid cross-case interference
         collection_name = None
         try:
-            if self.config.db == DB.Doris:
+            if self.config.db in (DB.Doris, DB.TDSQLMultimodal):
                 # Primary identifier = case-type enum name from CLI (e.g., Performance768D10M)
                 case_type_name = self.config.case_config.case_id.name
                 base = f"{case_type_name.lower()}"
