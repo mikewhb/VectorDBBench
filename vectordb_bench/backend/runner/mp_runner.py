@@ -2,6 +2,7 @@ import concurrent
 import contextlib
 import logging
 import multiprocessing as mp
+import os
 import random
 import time
 import traceback
@@ -62,17 +63,24 @@ class MultiProcessingSearchRunner:
         q: mp.Queue,
         cond: mp.Condition,
     ) -> tuple[int, float]:
-        # sync all process
-        q.put(1)
-        with cond:
-            cond.wait()
+        preinit_before_sync = os.environ.get("VDBBENCH_PREINIT_BEFORE_SYNC", "").strip() == "1"
+        with contextlib.ExitStack() as stack:
+            if preinit_before_sync:
+                stack.enter_context(self.db.init())
 
-        # NOTE: Zvec allows multiple read-only opens, or one read-write open.
-        # Use prepare_filter to switch to read-only mode.
-        with contextlib.suppress(Exception):
-            self.db.prepare_filter(self.filters)
+            # sync all process
+            q.put(1)
+            with cond:
+                cond.wait()
 
-        with self.db.init():
+            # NOTE: Zvec allows multiple read-only opens, or one read-write open.
+            # Use prepare_filter to switch to read-only mode.
+            with contextlib.suppress(Exception):
+                self.db.prepare_filter(self.filters)
+
+            if not preinit_before_sync:
+                stack.enter_context(self.db.init())
+
             self.db.prepare_filter(self.filters)
             num, idx = len(test_data), random.randint(0, len(test_data) - 1)
 

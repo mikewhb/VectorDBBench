@@ -48,7 +48,7 @@ class config:
     K_DEFAULT = 100  # default return top k nearest neighbors during search
     CUSTOM_CONFIG_DIR = pathlib.Path(__file__).parent.joinpath("custom/custom_case.json")
 
-    CAPACITY_TIMEOUT_IN_SECONDS = 24 * 3600  # 24h
+    CAPACITY_TIMEOUT_IN_SECONDS = env.int("CAPACITY_TIMEOUT_IN_SECONDS", 24 * 3600)  # default 24h
     LOAD_TIMEOUT_DEFAULT = 24 * 3600  # 24h
     LOAD_TIMEOUT_768D_100K = 24 * 3600  # 24h
     LOAD_TIMEOUT_768D_1M = 24 * 3600  # 24h

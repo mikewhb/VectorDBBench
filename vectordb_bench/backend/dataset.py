@@ -234,6 +234,17 @@ class Glove(BaseDataset):
     dim: int = 200
     metric_type: MetricType = MetricType.COSINE
     use_shuffled: bool = False
+    # The upstream Glove archive ships only train.parquet + test.parquet (no
+    # ground-truth file). For our local benchmarks we pre-compute neighbors.parquet
+    # via scripts_a1d/gen_glove_gt.py (top-100 brute-force cosine). Once that
+    # file is present alongside train/test, with_gt=True lets vectordbbench
+    # load test_data/gt_data and compute recall.
+    with_gt: bool = True
+    # Skip remote download/validation: neighbors.parquet does not exist on the
+    # public S3 mirror and would otherwise raise FileNotFoundError in
+    # AwsS3Reader.validate_file. All required files (train/test/neighbors)
+    # must be staged locally beforehand.
+    with_remote_resource: bool = False
     _size_label: ClassVar[dict] = {1_000_000: SizeLabel(1_000_000, "MEDIUM", 1)}
 
 

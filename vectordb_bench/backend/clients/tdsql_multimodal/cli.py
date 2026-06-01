@@ -1,7 +1,7 @@
 """CLI commands for TDSQL Multimodal client.
 
 Each index type gets its own subcommand so users can pick the index by
-selecting a different command (parallels Milvus / AliSQL conventions).
+selecting a different command.
 """
 
 import os
@@ -11,6 +11,7 @@ import click
 from pydantic import SecretStr
 
 from vectordb_bench.backend.clients import DB
+from vectordb_bench.backend.clients.api import MetricType
 
 from ....cli.cli import (
     CommonTypedDict,
@@ -21,8 +22,6 @@ from ....cli.cli import (
 
 
 class TDSQLMultimodalTypedDict(CommonTypedDict):
-    """Common TDSQL Multimodal connection options."""
-
     host: Annotated[
         str,
         click.option(
@@ -32,17 +31,15 @@ class TDSQLMultimodalTypedDict(CommonTypedDict):
             required=True,
         ),
     ]
-
     port: Annotated[
         int,
         click.option(
             "--port",
             type=int,
-            help="TDSQL Multimodal port (no default; must match the running instance)",
+            help="TDSQL Multimodal port (must match the running instance)",
             required=True,
         ),
     ]
-
     user_name: Annotated[
         str,
         click.option(
@@ -54,7 +51,6 @@ class TDSQLMultimodalTypedDict(CommonTypedDict):
             show_default=True,
         ),
     ]
-
     password: Annotated[
         str,
         click.option(
@@ -65,7 +61,6 @@ class TDSQLMultimodalTypedDict(CommonTypedDict):
             show_default=False,
         ),
     ]
-
     db_name: Annotated[
         str,
         click.option(
@@ -78,73 +73,271 @@ class TDSQLMultimodalTypedDict(CommonTypedDict):
     ]
 
 
-class TDSQLMultimodalIVFFlatTypedDict(TDSQLMultimodalTypedDict):
+class TDSQLMultimodalMetricTypedDict(TDSQLMultimodalTypedDict):
     metric_type: Annotated[
         str | None,
         click.option(
             "--metric-type",
-            type=click.Choice(["L2", "COSINE", "IP"], case_sensitive=False),
-            help="Distance metric. Defaults to COSINE (matches OpenAI/Cohere datasets).",
+            type=click.Choice(["L2", "COSINE", "IP", "DP"], case_sensitive=False),
+            help="Distance metric. Defaults to COSINE.",
             default="COSINE",
             show_default=True,
         ),
     ]
 
+
+def _parse_metric_type(raw: str | None) -> MetricType:
+    return MetricType[raw.upper()] if raw else MetricType.COSINE
+
+
+def _build_db_config(parameters: dict):
+    from .config import TDSQLMultimodalConfig
+
+    return TDSQLMultimodalConfig(
+        db_label=parameters["db_label"],
+        user_name=parameters["user_name"],
+        password=SecretStr(parameters["password"]),
+        host=parameters["host"],
+        port=parameters["port"],
+        db_name=parameters["db_name"],
+    )
+
+
+class TDSQLMultimodalCommonIVFTypedDict(TDSQLMultimodalMetricTypedDict):
     num_partitions: Annotated[
         int | None,
         click.option(
             "--num-partitions",
             type=int,
-            help="IVF_FLAT num_partitions (default: heuristic ~ sqrt(N))",
+            help="IVF num_partitions (default: heuristic ~ sqrt(N))",
             required=False,
         ),
     ]
-
     nprobs: Annotated[
         int | None,
         click.option(
             "--nprobs",
             type=int,
-            help="IVF_FLAT search nprobs",
+            help="Search nprobs",
             required=False,
         ),
     ]
-
     refine_factor: Annotated[
         int | None,
         click.option(
             "--refine-factor",
             type=int,
-            help="IVF_FLAT search refine_factor",
+            help="Search refine_factor",
             required=False,
         ),
     ]
 
 
 @cli.command()
-@click_parameter_decorators_from_typed_dict(TDSQLMultimodalIVFFlatTypedDict)
-def TDSQLMultimodalIVFFlat(  # noqa: N802 - command name matches CLI convention
-    **parameters: Unpack[TDSQLMultimodalIVFFlatTypedDict],
-):
-    from ..api import MetricType
-    from .config import TDSQLMultimodalConfig, TDSQLMultimodalIVFFlatConfig
-
-    # Map CLI string -> framework MetricType enum.
-    metric_type = MetricType[parameters["metric_type"].upper()] if parameters.get("metric_type") else MetricType.COSINE
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalCommonIVFTypedDict)
+def TDSQLMultimodalIVFFlat(**parameters: Unpack[TDSQLMultimodalCommonIVFTypedDict]):
+    from .config import TDSQLMultimodalIVFFlatConfig
 
     run(
         db=DB.TDSQLMultimodal,
-        db_config=TDSQLMultimodalConfig(
-            db_label=parameters["db_label"],
-            user_name=parameters["user_name"],
-            password=SecretStr(parameters["password"]),
-            host=parameters["host"],
-            port=parameters["port"],
-            db_name=parameters["db_name"],
-        ),
+        db_config=_build_db_config(parameters),
         db_case_config=TDSQLMultimodalIVFFlatConfig(
-            metric_type=metric_type,
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
             num_partitions=parameters["num_partitions"],
+            nprobs=parameters["nprobs"],
+            refine_factor=parameters["refine_factor"],
+        ),
+        **parameters,
+    )
+
+
+class TDSQLMultimodalIVFPQTypedDict(TDSQLMultimodalCommonIVFTypedDict):
+    num_sub_vectors: Annotated[
+        int | None,
+        click.option(
+            "--num-sub-vectors",
+            type=int,
+            help="IVF_PQ num_sub_vectors",
+            required=False,
+        ),
+    ]
+    num_bits: Annotated[
+        int | None,
+        click.option(
+            "--num-bits",
+            type=int,
+            help="IVF_PQ num_bits",
+            required=False,
+        ),
+    ]
+
+
+@cli.command()
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalIVFPQTypedDict)
+def TDSQLMultimodalIVFPQ(**parameters: Unpack[TDSQLMultimodalIVFPQTypedDict]):
+    from .config import TDSQLMultimodalIVFPQConfig
+
+    run(
+        db=DB.TDSQLMultimodal,
+        db_config=_build_db_config(parameters),
+        db_case_config=TDSQLMultimodalIVFPQConfig(
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
+            num_partitions=parameters["num_partitions"],
+            num_sub_vectors=parameters["num_sub_vectors"],
+            num_bits=parameters["num_bits"],
+            nprobs=parameters["nprobs"],
+            refine_factor=parameters["refine_factor"],
+        ),
+        **parameters,
+    )
+
+
+@cli.command()
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalCommonIVFTypedDict)
+def TDSQLMultimodalIVFSQ(**parameters: Unpack[TDSQLMultimodalCommonIVFTypedDict]):
+    from .config import TDSQLMultimodalIVFSQConfig
+
+    run(
+        db=DB.TDSQLMultimodal,
+        db_config=_build_db_config(parameters),
+        db_case_config=TDSQLMultimodalIVFSQConfig(
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
+            num_partitions=parameters["num_partitions"],
+            nprobs=parameters["nprobs"],
+            refine_factor=parameters["refine_factor"],
+        ),
+        **parameters,
+    )
+
+
+class TDSQLMultimodalIVFRQTypedDict(TDSQLMultimodalCommonIVFTypedDict):
+    num_bits: Annotated[
+        int | None,
+        click.option(
+            "--num-bits",
+            type=int,
+            help="IVF_RQ num_bits",
+            required=False,
+        ),
+    ]
+
+
+@cli.command()
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalIVFRQTypedDict)
+def TDSQLMultimodalIVFRQ(**parameters: Unpack[TDSQLMultimodalIVFRQTypedDict]):
+    from .config import TDSQLMultimodalIVFRQConfig
+
+    run(
+        db=DB.TDSQLMultimodal,
+        db_config=_build_db_config(parameters),
+        db_case_config=TDSQLMultimodalIVFRQConfig(
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
+            num_partitions=parameters["num_partitions"],
+            num_bits=parameters["num_bits"],
+            nprobs=parameters["nprobs"],
+            refine_factor=parameters["refine_factor"],
+        ),
+        **parameters,
+    )
+
+
+class TDSQLMultimodalIVFHNSWSQTypedDict(TDSQLMultimodalCommonIVFTypedDict):
+    m: Annotated[
+        int | None,
+        click.option(
+            "--m",
+            type=int,
+            help="IVF_HNSW_SQ HNSW m",
+            required=False,
+        ),
+    ]
+    ef_construction: Annotated[
+        int | None,
+        click.option(
+            "--ef-construction",
+            type=int,
+            help="IVF_HNSW_SQ HNSW ef_construction",
+            required=False,
+        ),
+    ]
+
+
+@cli.command()
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalIVFHNSWSQTypedDict)
+def TDSQLMultimodalIVFHNSWFlat(**parameters: Unpack[TDSQLMultimodalIVFHNSWSQTypedDict]):
+    from .config import TDSQLMultimodalIVFHNSWFlatConfig
+
+    run(
+        db=DB.TDSQLMultimodal,
+        db_config=_build_db_config(parameters),
+        db_case_config=TDSQLMultimodalIVFHNSWFlatConfig(
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
+            num_partitions=parameters["num_partitions"],
+            m=parameters["m"],
+            ef_construction=parameters["ef_construction"],
+            nprobs=parameters["nprobs"],
+            refine_factor=parameters["refine_factor"],
+        ),
+        **parameters,
+    )
+
+
+@cli.command()
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalIVFHNSWSQTypedDict)
+def TDSQLMultimodalIVFHNSWSQ(**parameters: Unpack[TDSQLMultimodalIVFHNSWSQTypedDict]):
+    from .config import TDSQLMultimodalIVFHNSWSQConfig
+
+    run(
+        db=DB.TDSQLMultimodal,
+        db_config=_build_db_config(parameters),
+        db_case_config=TDSQLMultimodalIVFHNSWSQConfig(
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
+            num_partitions=parameters["num_partitions"],
+            m=parameters["m"],
+            ef_construction=parameters["ef_construction"],
+            nprobs=parameters["nprobs"],
+            refine_factor=parameters["refine_factor"],
+        ),
+        **parameters,
+    )
+
+
+class TDSQLMultimodalIVFHNSWPQTypedDict(TDSQLMultimodalIVFHNSWSQTypedDict):
+    num_sub_vectors: Annotated[
+        int | None,
+        click.option(
+            "--num-sub-vectors",
+            type=int,
+            help="IVF_HNSW_PQ num_sub_vectors",
+            required=False,
+        ),
+    ]
+    num_bits: Annotated[
+        int | None,
+        click.option(
+            "--num-bits",
+            type=int,
+            help="IVF_HNSW_PQ num_bits",
+            required=False,
+        ),
+    ]
+
+
+@cli.command()
+@click_parameter_decorators_from_typed_dict(TDSQLMultimodalIVFHNSWPQTypedDict)
+def TDSQLMultimodalIVFHNSWPQ(**parameters: Unpack[TDSQLMultimodalIVFHNSWPQTypedDict]):
+    from .config import TDSQLMultimodalIVFHNSWPQConfig
+
+    run(
+        db=DB.TDSQLMultimodal,
+        db_config=_build_db_config(parameters),
+        db_case_config=TDSQLMultimodalIVFHNSWPQConfig(
+            metric_type=_parse_metric_type(parameters.get("metric_type")),
+            num_partitions=parameters["num_partitions"],
+            m=parameters["m"],
+            ef_construction=parameters["ef_construction"],
+            num_sub_vectors=parameters["num_sub_vectors"],
+            num_bits=parameters["num_bits"],
             nprobs=parameters["nprobs"],
             refine_factor=parameters["refine_factor"],
         ),

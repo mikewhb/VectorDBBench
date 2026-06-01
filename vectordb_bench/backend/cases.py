@@ -45,6 +45,8 @@ class CaseType(Enum):
     Performance1024D1M = 17
     Performance1024D10M = 20
 
+    Performance200D1M = 30
+
     Performance1536D50K = 50
 
     Custom = 100
@@ -324,6 +326,19 @@ class Performance1024D1M(PerformanceCase):
     description: str = """This case tests the search performance of a vector database with a medium 1M dataset
     (<b>Bioasq 1M vectors</b>, 1024 dimensions), at varying parallel levels. Results will show index building time,
     recall, and maximum QPS."""
+    load_timeout: float | int = config.LOAD_TIMEOUT_1024D_1M
+    optimize_timeout: float | int | None = config.OPTIMIZE_TIMEOUT_1024D_1M
+
+
+class Performance200D1M(PerformanceCase):
+    case_id: CaseType = CaseType.Performance200D1M
+    filter_rate: float | int | None = None
+    dataset: DatasetManager = Dataset.GLOVE.manager(1_000_000)
+    name: str = "Search Performance Test (1M Dataset, 200 Dim)"
+    description: str = """This case tests the search performance of a vector database with a medium 1M dataset
+    (<b>GloVe 1M vectors</b>, 200 dimensions, COSINE), at varying parallel levels. Results will show index building
+    time, recall, and maximum QPS."""
+    # Reuse 1024D_1M timeouts; GloVe is smaller so they are conservative upper bounds.
     load_timeout: float | int = config.LOAD_TIMEOUT_1024D_1M
     optimize_timeout: float | int | None = config.OPTIMIZE_TIMEOUT_1024D_1M
 
@@ -649,6 +664,7 @@ type2case = {
     CaseType.Performance1536D5M99P: Performance1536D5M99P,
     CaseType.Performance1024D1M: Performance1024D1M,
     CaseType.Performance1024D10M: Performance1024D10M,
+    CaseType.Performance200D1M: Performance200D1M,
     CaseType.Performance1536D50K: Performance1536D50K,
     CaseType.PerformanceCustomDataset: PerformanceCustomDataset,
     CaseType.StreamingPerformanceCase: StreamingPerformanceCase,

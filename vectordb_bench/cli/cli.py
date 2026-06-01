@@ -230,6 +230,16 @@ class CommonTypedDict(TypedDict):
             show_default=True,
         ),
     ]
+    rebuild_index: Annotated[
+        bool,
+        click.option(
+            "--rebuild-index/--skip-rebuild-index",
+            type=bool,
+            default=False,
+            help="When loading is skipped, rebuild the index before search",
+            show_default=True,
+        ),
+    ]
     load_concurrency: Annotated[
         int,
         click.option(
@@ -653,6 +663,7 @@ def run(
             parameters["search_concurrent"],
         ),
         load_concurrency=parameters["load_concurrency"],
+        rebuild_index=parameters["rebuild_index"],
     )
     task_label = parameters["task_label"]
 

@@ -58,7 +58,12 @@ class AliyunOSSReader(DatasetReader):
         self.bucket = oss2.Bucket(oss2.AnonymousAuth(), self.remote_root, "benchmark", True)
 
     def validate_file(self, remote: pathlib.Path, local: pathlib.Path) -> bool:
-        info = self.bucket.get_object_meta(remote.as_posix())
+        try:
+            info = self.bucket.get_object_meta(remote.as_posix())
+        except Exception as e:
+            # If OSS is unreachable, treat local file as valid to avoid re-download
+            log.warning(f"Cannot reach OSS to validate {remote}, treating local file as valid: {e}")
+            return True
 
         # check size equal
         remote_size, local_size = info.content_length, local.stat().st_size
@@ -86,8 +91,10 @@ class AliyunOSSReader(DatasetReader):
                 remote_file = pathlib.PurePosixPath("benchmark", dataset, file)
                 local_file = local_ds_root.joinpath(file)
 
-                if (not local_file.exists()) or (not self.validate_file(remote_file, local_file)):
-                    log.info(f"local file: {local_file} not match with remote: {remote_file}; add to downloading list")
+                # Skip download if local file already exists; remote validation
+                # requires S3/OSS connectivity which may not be available.
+                if not local_file.exists():
+                    log.info(f"local file: {local_file} not found; add to downloading list")
                     downloads.append((remote_file, local_file))
 
         if len(downloads) == 0:
@@ -130,8 +137,10 @@ class AwsS3Reader(DatasetReader):
                 remote_file = pathlib.PurePosixPath(self.remote_root, dataset, file)
                 local_file = local_ds_root.joinpath(file)
 
-                if (not local_file.exists()) or (not self.validate_file(remote_file, local_file)):
-                    log.info(f"local file: {local_file} not match with remote: {remote_file}; add to downloading list")
+                # Skip download if local file already exists; remote validation
+                # requires S3 connectivity which may not be available.
+                if not local_file.exists():
+                    log.info(f"local file: {local_file} not found; add to downloading list")
                     downloads.append(remote_file)
 
         if len(downloads) == 0:
@@ -145,8 +154,13 @@ class AwsS3Reader(DatasetReader):
         log.info(f"Succeed to download all files, downloaded file count = {len(downloads)}")
 
     def validate_file(self, remote: pathlib.Path, local: pathlib.Path) -> bool:
-        # info() uses ls() inside, maybe we only need to ls once
-        info = self.fs.info(remote)
+        try:
+            # info() uses ls() inside, maybe we only need to ls once
+            info = self.fs.info(remote)
+        except Exception as e:
+            # If S3 is unreachable, treat local file as valid to avoid re-download
+            log.warning(f"Cannot reach S3 to validate {remote}, treating local file as valid: {e}")
+            return True
 
         # check size equal
         remote_size, local_size = info.get("size"), local.stat().st_size

@@ -10,17 +10,31 @@ Key SQL shapes (verified against MTR baseline ``lance_index_ops.test`` and
   INSERT  INTO lance.main.<tbl> VALUES (?, [..]::FLOAT[<dim>]);
   CREATE INDEX <ix> ON lance.main.<tbl> (vec)
       USING IVF_FLAT WITH (num_partitions=N, metric_type='l2');
+  CREATE INDEX <ix> ON lance.main.<tbl> (vec)
+      USING IVF_PQ WITH (num_partitions=N, num_sub_vectors=M, num_bits=B, metric_type='cosine');
+  CREATE INDEX <ix> ON lance.main.<tbl> (vec)
+      USING IVF_HNSW_SQ WITH (num_partitions=N, metric_type='cosine', m=16, ef_construction=100);
   SELECT id FROM lance_vector_search(
       'lance.main.<tbl>', 'vec', [..]::FLOAT[<dim>], k=K, nprobs=P, refine_factor=R)
       ORDER BY _distance ASC, id;
 """
 
 import logging
+import os
+import random
 import re
 import threading
+import time
 from contextlib import contextmanager
 
 import mysql.connector as mysql
+
+# Experiment switch: when TDSQL_INSERT_NO_CAST=1, build INSERT VALUES rows
+# WITHOUT the trailing "::FLOAT[D]" cast on each vector literal. The default
+# (cast on) matches the MTR baseline; turning the cast off lets us measure
+# whether the DuckDB binder's CastExpression path is the dominant hot spot
+# during bulk load (1M+ ConstantExpression nodes per query).
+_INSERT_NO_CAST = os.environ.get("TDSQL_INSERT_NO_CAST", "0") == "1"
 
 from ..api import VectorDB
 from .config import (
@@ -39,11 +53,23 @@ log = logging.getLogger(__name__)
 _INDEX_SUFFIX = {
     "IVF_FLAT": "ivfflat",
     "IVF_PQ": "ivfpq",
-    "HNSW": "hnsw",
+    "IVF_HNSW_FLAT": "ivfhnswflat",
+    "IVF_HNSW_SQ": "ivfhnswsq",
+    "IVF_HNSW_PQ": "ivfhnswpq",
+    "IVF_SQ": "ivfsq",
+    "IVF_RQ": "ivfrq",
 }
 
 
-def _sanitize_table_name(collection_name: str, index_type_value: str) -> str:
+def _render_with_value(value) -> str:  # noqa: ANN001
+    if isinstance(value, str):
+        return f"'{value}'"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _sanitize_table_name(collection_name: str, index_type_value: str, include_index_suffix: bool = True) -> str:
     """Build the physical table name from the case collection name and index type.
 
     The function is idempotent w.r.t. ``TABLE_PREFIX``: if the caller already
@@ -59,6 +85,8 @@ def _sanitize_table_name(collection_name: str, index_type_value: str) -> str:
     """
     base = re.sub(r"[^A-Za-z0-9]+", "_", collection_name).strip("_").lower()
     suffix = _INDEX_SUFFIX.get(index_type_value, index_type_value.lower().replace("_", ""))
+    if not include_index_suffix:
+        return base if base.startswith(TABLE_PREFIX) else f"{TABLE_PREFIX}{base}"
     if base.startswith(TABLE_PREFIX):
         return f"{base}_{suffix}"
     return f"{TABLE_PREFIX}{base}_{suffix}"
@@ -114,7 +142,12 @@ class TDSQLMultimodal(VectorDB):
         # Physical table name encodes dataset + index type to keep parallel
         # benchmark runs isolated.
         index_type_value = self.case_config.index_param()["index_type"]
-        self.table_name = _sanitize_table_name(collection_name, index_type_value)
+        reuse_table = os.environ.get("TDSQL_MULTIMODAL_REUSE_TABLE_ACROSS_INDEXES", "0") == "1"
+        self.table_name = _sanitize_table_name(
+            collection_name,
+            index_type_value,
+            include_index_suffix=not reuse_table,
+        )
         self.full_table = f"{LANCE_CATALOG}.{LANCE_SCHEMA}.{self.table_name}"
 
         # Thread-local storage is created lazily in init() (which runs inside
@@ -228,10 +261,43 @@ class TDSQLMultimodal(VectorDB):
         # we receive here may have just been unpickled in a fresh subprocess.
         self._tls = threading.local()
         try:
+            if os.environ.get("TDSQL_MULTIMODAL_PREWARM", "").strip() == "1":
+                self._prewarm()
             yield
         finally:
             self._close_local()
             self._tls = None
+
+    def _prewarm(self) -> None:
+        """Warm TDSQL/Lance lazy search paths with probe vector searches.
+
+        TDSQL does not expose a LanceDB-style prewarm_index() API over SQL, so
+        the equivalent warmup available here is to execute unmeasured vector
+        searches before the benchmark timer starts.
+        """
+        try:
+            n_probes = int(os.environ.get("TDSQL_MULTIMODAL_PREWARM_PROBES", "100"))
+        except ValueError:
+            n_probes = 100
+        if n_probes <= 0:
+            return
+
+        k = 10
+        try:
+            k = int(os.environ.get("TDSQL_MULTIMODAL_PREWARM_K", "10"))
+        except ValueError:
+            k = 10
+
+        rnd = random.Random(42)
+        t0 = time.perf_counter()
+        for _ in range(n_probes):
+            vec = [rnd.random() for _ in range(self.dim)]
+            try:
+                self.search_embedding(vec, k=k)
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"TDSQL prewarm probe search failed: {e}")
+                break
+        log.info(f"TDSQL prewarm probe: {n_probes} searches done in {time.perf_counter() - t0:.2f}s")
 
     def ready_to_load(self) -> bool:
         return True
@@ -266,7 +332,7 @@ class TDSQLMultimodal(VectorDB):
             n = len(metadata)
             # Build one row literal per embedding. Pre-compute the cast
             # suffix once so the inner loop only does string interpolation.
-            cast = f"::FLOAT[{self.dim}]"
+            cast = "" if _INSERT_NO_CAST else f"::FLOAT[{self.dim}]"
             rows = [
                 f"({int(metadata[i])}, {_vec_to_literal(embeddings[i])}{cast})"
                 for i in range(n)
@@ -286,31 +352,71 @@ class TDSQLMultimodal(VectorDB):
     # Index build (called once between load and search)
     # --------------------------------------------------------------------- #
     def optimize(self, data_size: int | None = None) -> None:
-        index_param = self.case_config.index_param()
-        index_type = index_param["index_type"]
-        metric = index_param["metric_type"]
+        index_param = self.case_config.index_param().copy()
+        index_type = index_param.pop("index_type")
 
-        if index_type == "IVF_FLAT":
-            num_partitions = index_param.get("num_partitions") or self._default_num_partitions(data_size)
-            ddl = (
-                f"CREATE INDEX {self.table_name}_idx "
-                f"ON {self.full_table} (vec) USING IVF_FLAT "
-                f"WITH (num_partitions={num_partitions}, metric_type='{metric}')"
-            )
+        if index_type in {
+            "IVF_FLAT",
+            "IVF_PQ",
+            "IVF_HNSW_FLAT",
+            "IVF_HNSW_SQ",
+            "IVF_HNSW_PQ",
+            "IVF_SQ",
+            "IVF_RQ",
+        }:
+            if not index_param.get("num_partitions"):
+                index_param["num_partitions"] = self._default_num_partitions(data_size)
         else:
             msg = f"Index type {index_type} not supported yet by TDSQLMultimodal client"
             raise NotImplementedError(msg)
+
+        with_items = []
+        for key, value in index_param.items():
+            if value is None:
+                continue
+            with_items.append(f"{key}={_render_with_value(value)}")
+
+        ddl = (
+            f"CREATE INDEX {self.table_name}_idx "
+            f"ON {self.full_table} (vec) USING {index_type}"
+        )
+        if with_items:
+            ddl += f" WITH ({', '.join(with_items)})"
 
         log.info(f"{self.name} build index: {ddl}")
         # optimize() is called between load and search by the framework, on
         # an arbitrary thread. Use this thread's connection.
         conn, cursor = self._get_local()
         try:
+            self._drop_index(conn, cursor)
             cursor.execute(ddl)
             conn.commit()
         except Exception as e:  # noqa: BLE001
             log.warning(f"Index build failed on {self.full_table}: {e}")
             raise
+
+    def _drop_index(self, conn, cursor) -> None:  # noqa: ANN001
+        index_name = f"{self.table_name}_idx"
+        log.info(f"{self.name} drop index if exists: {index_name} on {self.full_table}")
+        statements = (
+            f"DROP INDEX IF EXISTS {index_name} ON {self.full_table}",
+            f"DROP INDEX {index_name} ON {self.full_table}",
+            f"DROP INDEX IF EXISTS {index_name}",
+            f"DROP INDEX {index_name}",
+        )
+        last_error = None
+        for stmt in statements:
+            try:
+                cursor.execute(stmt)
+                conn.commit()
+                return
+            except Exception:  # noqa: BLE001
+                last_error = stmt
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+        log.info(f"DROP INDEX skipped for {index_name}; last attempted statement: {last_error}")
 
     @staticmethod
     def _default_num_partitions(data_size: int | None) -> int:

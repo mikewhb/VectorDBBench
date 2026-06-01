@@ -13,7 +13,17 @@ from ..backend.clients.elastic_cloud.cli import (
 )
 from ..backend.clients.endee.cli import Endee
 from ..backend.clients.hologres.cli import HologresHGraph
-from ..backend.clients.lancedb.cli import LanceDB
+from ..backend.clients.lancedb.cli import (
+    LanceDB,
+    LanceDBAutoIndex,
+    LanceDBIVFFlat,
+    LanceDBIVFHNSWFlat,
+    LanceDBIVFHNSWPQ,
+    LanceDBIVFHNSWSQ,
+    LanceDBIVFPQ,
+    LanceDBIVFRQ,
+    LanceDBIVFSQ,
+)
 from ..backend.clients.lindorm.cli import LindormHNSW, LindormIVFBQ, LindormIVFPQ
 from ..backend.clients.mariadb.cli import MariaDBHNSW
 from ..backend.clients.memorydb.cli import MemoryDB
@@ -37,7 +47,15 @@ from ..backend.clients.redis.cli import Redis
 from ..backend.clients.s3_vectors.cli import S3Vectors
 from ..backend.clients.seekdb.cli import SeekDBHNSW
 from ..backend.clients.tencent_elasticsearch.cli import TencentElasticsearch
-from ..backend.clients.tdsql_multimodal.cli import TDSQLMultimodalIVFFlat
+from ..backend.clients.tdsql_multimodal.cli import (
+    TDSQLMultimodalIVFFlat,
+    TDSQLMultimodalIVFHNSWFlat,
+    TDSQLMultimodalIVFHNSWPQ,
+    TDSQLMultimodalIVFHNSWSQ,
+    TDSQLMultimodalIVFPQ,
+    TDSQLMultimodalIVFRQ,
+    TDSQLMultimodalIVFSQ,
+)
 from ..backend.clients.test.cli import Test
 from ..backend.clients.tidb.cli import TiDB
 from ..backend.clients.turbopuffer.cli import TurboPuffer
@@ -71,6 +89,14 @@ cli.add_command(CockroachDBCli)
 cli.add_command(Clickhouse)
 cli.add_command(Vespa)
 cli.add_command(LanceDB)
+cli.add_command(LanceDBAutoIndex)
+cli.add_command(LanceDBIVFFlat)
+cli.add_command(LanceDBIVFPQ)
+cli.add_command(LanceDBIVFHNSWFlat)
+cli.add_command(LanceDBIVFHNSWSQ)
+cli.add_command(LanceDBIVFHNSWPQ)
+cli.add_command(LanceDBIVFSQ)
+cli.add_command(LanceDBIVFRQ)
 cli.add_command(HologresHGraph)
 cli.add_command(QdrantCloud)
 cli.add_command(QdrantLocal)
@@ -99,6 +125,12 @@ cli.add_command(PolarDBHNSWPQ)
 cli.add_command(PolarDBHNSWSQ)
 cli.add_command(SeekDBHNSW)
 cli.add_command(TDSQLMultimodalIVFFlat)
+cli.add_command(TDSQLMultimodalIVFPQ)
+cli.add_command(TDSQLMultimodalIVFHNSWFlat)
+cli.add_command(TDSQLMultimodalIVFHNSWSQ)
+cli.add_command(TDSQLMultimodalIVFHNSWPQ)
+cli.add_command(TDSQLMultimodalIVFSQ)
+cli.add_command(TDSQLMultimodalIVFRQ)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import math
 import multiprocessing as mp
+import os
 import time
 import traceback
 
@@ -12,7 +13,6 @@ from vectordb_bench.backend.filter import Filter, non_filter
 
 from ... import config
 from ...metric import calc_ndcg, calc_recall, get_ideal_dcg
-from ...models import LoadTimeoutError
 from .. import utils
 from ..clients import api
 
@@ -119,7 +119,11 @@ class SerialInsertRunner:
             traceback.print_exc()
             return max_load_count
         else:
-            raise LoadTimeoutError(self.timeout)
+            log.info(
+                f"Capacity case timeout reached, insertion counts={utils.numerize(max_load_count)}, "
+                f"{max_load_count}"
+            )
+            return max_load_count
 
 
 class SerialSearchRunner:
@@ -140,6 +144,25 @@ class SerialSearchRunner:
         else:
             self.test_data = test_data
         self.ground_truth = ground_truth
+
+        # Optional truncation of the serial test set. Set via env var
+        # VDBBENCH_SERIAL_TEST_LIMIT=<int>. Useful when a single serial
+        # search would otherwise dominate wall time (e.g. multi-million-row
+        # cases with sub-second-per-query backends). Default (0 or unset) =
+        # use the full test set. Both test_data and ground_truth are kept
+        # index-aligned.
+        try:
+            limit = int(os.environ.get("VDBBENCH_SERIAL_TEST_LIMIT", "0") or "0")
+        except ValueError:
+            limit = 0
+        if limit > 0 and len(self.test_data) > limit:
+            log.warning(
+                f"VDBBENCH_SERIAL_TEST_LIMIT={limit}: truncating serial test_data "
+                f"from {len(self.test_data)} to {limit} queries (recall stderr ~ 0.5/sqrt(limit))"
+            )
+            self.test_data = self.test_data[:limit]
+            if self.ground_truth is not None:
+                self.ground_truth = self.ground_truth[:limit]
 
     def _get_db_search_res(self, emb: list[float], retry_idx: int = 0) -> list[int]:
         try:

@@ -1,6 +1,7 @@
 import concurrent.futures
 import logging
 import multiprocessing as mp
+import os
 import pathlib
 import traceback
 import uuid
@@ -189,7 +190,7 @@ class BenchMarkRunner:
                     cached_load_duration = case_res.metrics.load_duration if drop_old else cached_load_duration
 
                     # use the cached load duration if this case didn't drop the existing collection
-                    if not drop_old:
+                    if not drop_old and not runner.config.rebuild_index:
                         case_res.metrics.load_duration = cached_load_duration if cached_load_duration else 0.0
                 except (LoadTimeoutError, PerformanceTimeoutError) as e:
                     log.warning(f"[{idx+1}/{num_cases}] case {runner.display()} failed to run, reason={e}")
@@ -250,9 +251,10 @@ class BenchMarkRunner:
             f"case number: {len(self.running_task.case_runners)}"
         )
         global global_result_future
+        mp_context_name = os.environ.get("VDBBENCH_MP_CONTEXT", "spawn")
         executor = concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
-            mp_context=mp.get_context("spawn"),
+            mp_context=mp.get_context(mp_context_name),
         )
         global_result_future = executor.submit(self._async_task_v2, self.running_task, conn)
 

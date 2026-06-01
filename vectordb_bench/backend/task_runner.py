@@ -208,6 +208,11 @@ class CaseRunner(BaseModel):
                     )
                 else:
                     log.info("Data loading skipped")
+            elif self.config.rebuild_index:
+                build_dur = self._optimize()
+                m.optimize_duration = round(build_dur, 4)
+                m.load_duration = m.optimize_duration
+                log.info(f"Finish rebuilding index without loading data, optimize_duration={build_dur}")
             if TaskStage.SEARCH_SERIAL in self.config.stages or TaskStage.SEARCH_CONCURRENT in self.config.stages:
                 self._init_search_runner()
                 if TaskStage.SEARCH_CONCURRENT in self.config.stages:
